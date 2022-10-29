@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"os"
@@ -23,8 +24,9 @@ import (
 var (
 	_            Storager = (*IndexInMemory)(nil)
 	defaultTable          = crc32.MakeTable(0xD5828281)
-	maxLimit              = 1 << 32
+	maxDatLimit           = 32 * GB
 	payload               = 4
+	ErrFull               = errors.New("The space is full")
 )
 
 type Index struct {
@@ -44,7 +46,8 @@ type Data struct {
 type IndexInMemory struct {
 	idx *os.File //索引文件
 	dat *os.File //数据文件
-
+	// 当前记录总字节数
+	totalSize int64
 	//被删除文件的个数
 	deleteCount int
 	// 文件总数, 被删除的也计算在内
@@ -62,8 +65,37 @@ type IndexInMemory struct {
 	seq int64
 }
 
+func (i *IndexInMemory) checkFull() (err error) {
+
+	i.rwmu.Lock()
+	i.rwmu.Unlock()
+
+	if i.readonly {
+		err = ErrFull
+		return
+	}
+
+	if i.totalSize >= int64(maxDatLimit) {
+		i.readonly = true
+	}
+
+	return ErrFull
+}
+
+func (i *IndexInMemory) GetSeq() (key int64) {
+	i.rwmu.Lock()
+	key = i.seq
+	i.seq++
+	i.rwmu.Unlock()
+	return
+}
+
 // 保存
-func (i *IndexInMemory) Put(key int64, size int32, data []byte) (index int, err error) {
+func (i *IndexInMemory) Put(key int64, data []byte) (index int, err error) {
+	if err := i.checkFull(); err != nil {
+		return 0, err
+	}
+
 	// TODO sync.Pool
 	var buf bytes.Buffer
 
@@ -71,7 +103,7 @@ func (i *IndexInMemory) Put(key int64, size int32, data []byte) (index int, err 
 
 	idx := IdxVersion0{}
 	idx.Key = key
-	idx.Size = size
+	idx.Size = int32(len(data))
 	idx.Offset = i.DatOffset
 	idx.Crc32 = crc
 
@@ -94,8 +126,8 @@ func (i *IndexInMemory) Put(key int64, size int32, data []byte) (index int, err 
 
 	// 3. 更新数据文件
 	if _, err := i.dat.WriteAt(data, i.DatOffset); err != nil {
+		i.idx.Truncate(i.idxOffset) //修改文件指针的大小
 		i.idx.Seek(int64(-n), 1)    //修改文件偏移指针
-		i.idx.Truncate(i.idxOffset) //修改大小的变量
 		i.rwmu.Unlock()
 		return 0, err
 	}
