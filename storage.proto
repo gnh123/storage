@@ -1,8 +1,7 @@
 syntax = "proto3";
 
 //go_package "github.com/gnh123/storage";
-option go_package="storage";
-package storage;
+option go_package="../storage";
 
 // 索引的数据结构
 // 完整的索引，还有payload(放在第一位)和crc32(第在最后一位)
