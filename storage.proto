@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+//go_package "github.com/gnh123/storage";
+option go_package="storage";
+package storage;
+
+// 索引的数据结构
+// 完整的索引，还有payload(放在第一位)和crc32(第在最后一位)
+message idxVersion0 {
+  int32 key = 1; //返回给客户端的值
+  int32 size= 2;//大小
+  int64 offset= 3;//偏移量
+  int64 timeout= 4; //超时时间
+};
