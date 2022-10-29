@@ -23,7 +23,7 @@ var (
 
 // 一组里面有多个引擎，一个引擎只存储32GB
 type Group struct {
-	datArr []Storager
+	datArr []Storager //一个组下面有多个存储引擎
 	next   int32
 }
 
@@ -42,15 +42,20 @@ func (g *Group) Put(data []byte) (index string, err error) {
 	groupIndex := atomic.LoadInt32(&g.next)
 	var idx int
 	for ; groupIndex < int32(len(g.datArr)); groupIndex++ {
+		groupIndex = atomic.LoadInt32(&g.next)
 		key := g.datArr[groupIndex].GetSeq()
 		idx, err = g.datArr[groupIndex].Put(key, data)
-		if err != nil && errors.Is(err, ErrFull) {
-			continue
-		}
-	}
+		if err != nil {
+			if errors.Is(err, ErrFull) {
+				atomic.AddInt32(&g.next, 1)
+				continue
+			}
 
-	if err != nil {
-		return
+			if err != nil {
+				return
+			}
+		}
+		break
 	}
 
 	return fmt.Sprintf("%d,%d", groupIndex, idx), nil
@@ -67,14 +72,14 @@ func (g *Group) checkIndex(key string) (groupIndex int, idx int, err error) {
 	groupIndexStr := key[:pos]
 	groupIndex, err = strconv.Atoi(groupIndexStr)
 	if err != nil {
-		err = fmt.Errorf("%w %w", ErrIllegalKey, err)
+		err = fmt.Errorf("%w %s", ErrIllegalKey, err)
 		return
 	}
 
 	idxStr := key[pos+1:]
 	idx, err = strconv.Atoi(idxStr)
 	if err != nil {
-		err = fmt.Errorf("%w %w", ErrIllegalKey, err)
+		err = fmt.Errorf("%w %s", ErrIllegalKey, err)
 		return
 	}
 
