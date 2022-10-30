@@ -276,6 +276,7 @@ func (i *IndexInMemory) Put(key int64, data []byte) (index int, err error) {
 	i.allIndex[i.Seq] = idxMem
 	i.Seq++
 	i.FileCount++
+	i.updateMetadata()
 	i.rwmu.Unlock()
 	return 0, nil
 }
@@ -308,6 +309,7 @@ func (i *IndexInMemory) Delete(key int64) error {
 	i.rwmu.Lock()
 	delete(i.allIndex, key)
 	i.DeleteCount++
+	i.updateMetadata()
 	i.rwmu.Unlock()
 	return nil
 }
