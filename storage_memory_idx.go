@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"os"
 	"sync"
 
@@ -42,27 +43,104 @@ type Data struct {
 	Data []byte
 }
 
+type metadata struct {
+	// 下个索引值, 需要持久化到文件中
+	Seq int64
+	// 当前记录总字节数, 限制单个索引能管理的最大数据，需要持久化到文件中
+	TotalSize int64
+	//被删除文件的个数,需要持久化到文件中
+	DeleteCount int
+	// 文件总数, 被删除的也计算在内, 需要持久化到文件中
+	FileCount int
+	// false代表可写, 需要持久化到文件中
+	Readonly bool
+	//最后一个offset, 需要持久化到文件中
+	DatOffset int64
+}
+
 // 一个内存索引管理32GB文件
 type IndexInMemory struct {
 	idx *os.File //索引文件
 	dat *os.File //数据文件
-	// 当前记录总字节数
-	totalSize int64
-	//被删除文件的个数
-	deleteCount int
-	// 文件总数, 被删除的也计算在内
-	fileCount int
-	// false代表可写
-	readonly bool
+	md  *os.File //元数据文件
 	// 读写锁
 	rwmu sync.RWMutex
-	//最后一个offset
-	DatOffset int64
+
+	//最后一个索引数据的offset
 	idxOffset int64
+
+	metadata
+
 	// sync.Map没有Len比较蛋疼，所以这里还是map+读写锁
 	allIndex map[int64]Index
-	// 下个索引值
-	seq int64
+}
+
+func idxName(fileName string) string {
+	return fmt.Sprintf("%s.idx", fileName)
+}
+
+func datName(fileName string) string {
+	return fmt.Sprintf("%s.dat", fileName)
+}
+
+func newIndexInMemory(fileName string) (idx *IndexInMemory, err error) {
+	var memIndex IndexInMemory
+
+	// 打开并加载索引文件
+	if err = memIndex.loadIdx(fileName); err != nil {
+		return nil, err
+	}
+
+	if err = memIndex.loadDat(fileName); err != nil {
+		return nil, err
+	}
+	return &memIndex, nil
+}
+
+func (i *IndexInMemory) loadIdx(idxName string) (err error) {
+	// 打开索引文件
+	i.idx, err = os.OpenFile(idxName, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0644)
+	if err != nil {
+		return err
+	}
+
+	head := uint32(0)
+	defer func() {
+		if err == io.EOF {
+			err = nil
+		}
+	}()
+
+	for {
+
+		err = binary.Read(i.idx, binary.LittleEndian, &head)
+		if err != nil {
+			return
+		}
+
+		buf := make([]byte, head)
+		_, err = i.idx.ReadAt(buf, i.idxOffset)
+		if err != nil {
+			return err
+		}
+
+		var index IdxVersion0
+		if err = proto.Unmarshal(buf, &index); err != nil {
+			return err
+		}
+
+		var index2 Index
+		if err = deepcopy.Copy(&index2, &index).Do(); err != nil {
+			return err
+		}
+		i.idxOffset += int64(head)
+		i.allIndex[int64(index2.Key)] = index2
+	}
+}
+
+func (i *IndexInMemory) loadDat(datName string) (err error) {
+	i.dat, err = os.OpenFile(datName, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0644)
+	return
 }
 
 func (i *IndexInMemory) checkFull() (err error) {
@@ -70,13 +148,13 @@ func (i *IndexInMemory) checkFull() (err error) {
 	i.rwmu.Lock()
 	i.rwmu.Unlock()
 
-	if i.readonly {
+	if i.Readonly {
 		err = ErrFull
 		return
 	}
 
-	if i.totalSize >= int64(maxDatLimit) {
-		i.readonly = true
+	if i.TotalSize >= int64(maxDatLimit) {
+		i.Readonly = true
 	}
 
 	return ErrFull
@@ -84,8 +162,8 @@ func (i *IndexInMemory) checkFull() (err error) {
 
 func (i *IndexInMemory) GetSeq() (key int64) {
 	i.rwmu.Lock()
-	key = i.seq
-	i.seq++
+	key = i.Seq
+	i.Seq++
 	i.rwmu.Unlock()
 	return
 }
@@ -137,9 +215,9 @@ func (i *IndexInMemory) Put(key int64, data []byte) (index int, err error) {
 
 	var idxMem Index
 	deepcopy.Copy(&idxMem, &idx).Do()
-	i.allIndex[i.seq] = idxMem
-	i.seq++
-	i.fileCount++
+	i.allIndex[i.Seq] = idxMem
+	i.Seq++
+	i.FileCount++
 	i.rwmu.Unlock()
 	return 0, nil
 }
@@ -171,7 +249,7 @@ func (i *IndexInMemory) Get(key int64) (element Data, ok bool, err error) {
 func (i *IndexInMemory) Delete(key int64) error {
 	i.rwmu.Lock()
 	delete(i.allIndex, key)
-	i.deleteCount++
+	i.DeleteCount++
 	i.rwmu.Unlock()
 	return nil
 }
