@@ -65,10 +65,12 @@ func loadOrNewGroup(dir string, max Size) (g *Group, err error) {
 		}
 	}()
 	for i := range g.datArr {
-		g.datArr[i], err = newIndexInMemory(fmt.Sprintf("%s%d", dirName(dir), i))
+		var idx *IndexInMemory
+		idx, err = newIndexInMemory(fmt.Sprintf("%s%d", dirName(dir), i))
 		if err != nil {
-			return nil, err
+			return
 		}
+		g.datArr[i] = idx
 	}
 
 	return
