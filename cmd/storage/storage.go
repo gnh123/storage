@@ -6,11 +6,17 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gnh123/storage"
+	"github.com/gnh123/storage/cmd/benchmark"
 	"github.com/guonaihong/clop"
 	"github.com/guonaihong/gutil/file"
 )
 
 type Storage struct {
+	Server              `clop:"subcommand" usage:"server sub command"`
+	benchmark.Benchmark `clop:"subcommand" usage:"benchmark"`
+}
+
+type Server struct {
 	Dir  string       `clop:"short;long" usage:"dir" valid:"required"`
 	Size storage.Size `clop:"short;long;callback=ParseSize" usage:"Maximum capacity that can be stored, example:1G 1T" `
 	s    storage.Storage
@@ -25,7 +31,7 @@ type data struct {
 }
 
 // clop的callback=ParseSize会调用
-func (s *Storage) ParseSize(val string) {
+func (s *Server) ParseSize(val string) {
 	size, err := file.ParseSize(val)
 	if err != nil {
 		fmt.Printf("parse size fail:%s\n", err)
@@ -35,7 +41,7 @@ func (s *Storage) ParseSize(val string) {
 	s.Size = storage.Size(size)
 }
 
-func (s *Storage) createRaw(c *gin.Context) {
+func (s *Server) createRaw(c *gin.Context) {
 	data, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		c.JSON(500, gin.H{"code": 1, "message": err.Error()})
@@ -51,7 +57,7 @@ func (s *Storage) createRaw(c *gin.Context) {
 	c.JSON(200, gin.H{"code": 0, "message": "", "data": gin.H{"index": index}})
 }
 
-func (s *Storage) create(c *gin.Context) {
+func (s *Server) create(c *gin.Context) {
 	d := data{}
 	err := c.ShouldBindJSON(&d)
 	if err != nil {
@@ -67,7 +73,7 @@ func (s *Storage) create(c *gin.Context) {
 	c.JSON(200, gin.H{"code": 0, "message": "", "data": gin.H{"index": index}})
 }
 
-func (s *Storage) delete(c *gin.Context) {
+func (s *Server) delete(c *gin.Context) {
 
 	var q query
 	err := c.ShouldBindQuery(&q)
@@ -80,7 +86,7 @@ func (s *Storage) delete(c *gin.Context) {
 	c.JSON(200, gin.H{"code": 0, "message": ""})
 }
 
-func (s *Storage) get(c *gin.Context) {
+func (s *Server) get(c *gin.Context) {
 	var q query
 	err := c.ShouldBindQuery(&q)
 	if err != nil {
@@ -103,13 +109,9 @@ func (s *Storage) get(c *gin.Context) {
 
 }
 
-func main() {
+func (s *Server) SubMain() {
 
-	var s Storage
 	var err error
-
-	clop.Bind(&s)
-
 	r := gin.Default()
 
 	s.s, err = storage.Open(s.Dir, s.Size)
@@ -124,4 +126,12 @@ func main() {
 	r.GET("/file", s.get)
 
 	r.Run()
+}
+
+func main() {
+
+	var s Storage
+
+	clop.Bind(&s)
+
 }

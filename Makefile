@@ -7,4 +7,4 @@ build:
 	go build ./cmd/storage/storage.go
 
 test:
-	./storage -d ./my-store -s 64GB
+	./storage server -d ./my-store -s 64GB
