@@ -96,6 +96,8 @@ func metaName(fileName string) string {
 func newIndexInMemory(fileName string) (idx *IndexInMemory, err error) {
 	var memIndex IndexInMemory
 
+	memIndex.allIndex = make(map[int64]Index, 10)
+
 	// 打开并加载索引文件
 	if err = memIndex.loadIdx(fileName); err != nil {
 		return nil, err
@@ -117,7 +119,7 @@ func newIndexInMemory(fileName string) (idx *IndexInMemory, err error) {
 // 加载元数据
 func (i *IndexInMemory) loadMeta(name string) (err error) {
 	name = metaName(name)
-	i.md, err = os.OpenFile(name, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0644)
+	i.md, err = os.OpenFile(name, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return err
 	}
@@ -156,7 +158,7 @@ func (i *IndexInMemory) loadMeta(name string) (err error) {
 
 func (i *IndexInMemory) loadIdx(name string) (err error) {
 	// 打开索引文件
-	i.idx, err = os.OpenFile(idxName(name), os.O_CREATE|os.O_APPEND|os.O_RDWR, 0644)
+	i.idx, err = os.OpenFile(idxName(name), os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return err
 	}
@@ -196,14 +198,14 @@ func (i *IndexInMemory) loadIdx(name string) (err error) {
 }
 
 func (i *IndexInMemory) loadDat(name string) (err error) {
-	i.dat, err = os.OpenFile(datName((name)), os.O_CREATE|os.O_APPEND|os.O_RDWR, 0644)
+	i.dat, err = os.OpenFile(datName((name)), os.O_CREATE|os.O_RDWR, 0644)
 	return
 }
 
 func (i *IndexInMemory) checkFull() (err error) {
 
 	i.rwmu.Lock()
-	i.rwmu.Unlock()
+	defer i.rwmu.Unlock()
 
 	if i.Readonly {
 		err = ErrFull
@@ -212,9 +214,10 @@ func (i *IndexInMemory) checkFull() (err error) {
 
 	if i.TotalSize >= int64(maxDatLimit) {
 		i.Readonly = true
+		return ErrFull
 	}
 
-	return ErrFull
+	return nil
 }
 
 func (i *IndexInMemory) updateMetadata() {
@@ -230,9 +233,9 @@ func (i *IndexInMemory) GetSeq() (key int64) {
 }
 
 // 保存
-func (i *IndexInMemory) Put(key int64, data []byte) (index int, err error) {
+func (i *IndexInMemory) Put(key int64, data []byte) (err error) {
 	if err := i.checkFull(); err != nil {
-		return 0, err
+		return err
 	}
 
 	// TODO sync.Pool
@@ -248,19 +251,23 @@ func (i *IndexInMemory) Put(key int64, data []byte) (index int, err error) {
 
 	all, err := proto.Marshal(&idx)
 	if err != nil {
-		return 0, err
+		return err
 	}
 
+	// 写入头
 	if err := binary.Write(&buf, binary.LittleEndian, int32(len(all))); err != nil {
-		return 0, err
+		return err
 	}
+
+	// 写入内容
+	binary.Write(&buf, binary.LittleEndian, all)
 
 	i.rwmu.Lock()
 	// 1. 写入索引文件
 	n, err := i.idx.Write(buf.Bytes())
 	if err != nil {
 		i.rwmu.Unlock()
-		return 0, err
+		return err
 	}
 
 	// 3. 更新数据文件
@@ -268,20 +275,24 @@ func (i *IndexInMemory) Put(key int64, data []byte) (index int, err error) {
 		i.idx.Truncate(i.idxOffset) //修改文件指针的大小
 		i.idx.Seek(int64(-n), 1)    //修改文件偏移指针
 		i.rwmu.Unlock()
-		return 0, err
+		return err
 	}
 	// 2. 更新offset
 	i.DatOffset += int64(len(data))
 	i.idxOffset += int64(len(all)) + 4
 
 	var idxMem Index
-	deepcopy.Copy(&idxMem, &idx).Do()
+	err = deepcopy.Copy(&idxMem, &idx).Do()
+	if err != nil {
+		i.rwmu.Unlock()
+		return err
+	}
 	i.allIndex[i.Seq] = idxMem
 	i.Seq++
 	i.FileCount++
 	i.updateMetadata()
 	i.rwmu.Unlock()
-	return 0, nil
+	return nil
 }
 
 // 获取
@@ -289,13 +300,13 @@ func (i *IndexInMemory) Get(key int64) (element Data, ok bool, err error) {
 	i.rwmu.RLock()
 	element.Index, ok = i.allIndex[key]
 	if !ok {
-		i.rwmu.Unlock()
+		i.rwmu.RUnlock()
 		return
 	}
 
 	// TODO sync.Pool
 	element.Data = make([]byte, element.Size)
-	i.idx.ReadAt(element.Data, element.Offset)
+	i.dat.ReadAt(element.Data, element.Offset)
 	crc := crc32.Checksum(element.Data, defaultTable)
 	if crc != element.Crc32 {
 		err = fmt.Errorf("The data file is bad:key(%d)\n", key)

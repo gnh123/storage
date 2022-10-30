@@ -79,11 +79,11 @@ func loadOrNewGroup(dir string, max Size) (g *Group, err error) {
 func (g *Group) Put(data []byte) (index string, err error) {
 
 	groupIndex := atomic.LoadInt32(&g.next)
-	var idx int
+	key := int64(0)
 	for groupIndex < int32(len(g.datArr)) {
 		groupIndex = atomic.LoadInt32(&g.next)
-		key := g.datArr[groupIndex].GetSeq()
-		idx, err = g.datArr[groupIndex].Put(key, data)
+		key = g.datArr[groupIndex].GetSeq()
+		err = g.datArr[groupIndex].Put(key, data)
 		if err != nil {
 			if errors.Is(err, ErrFull) {
 				// 只有一个go程可以安全修改
@@ -98,7 +98,7 @@ func (g *Group) Put(data []byte) (index string, err error) {
 		break
 	}
 
-	return fmt.Sprintf("%d,%d", groupIndex, idx), nil
+	return fmt.Sprintf("%d,%d", groupIndex, key), nil
 }
 
 func (g *Group) checkIndex(key string) (groupIndex int, idx int, err error) {

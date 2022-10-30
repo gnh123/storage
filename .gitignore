@@ -15,3 +15,13 @@
 # vendor/
 /storage
 /my-store
+
+#
+/testdata/0.dat
+/testdata/0.idx
+/testdata/0.meta
+
+#
+/testdata/1.dat
+/testdata/1.idx
+/testdata/1.meta
