@@ -1,8 +1,10 @@
 package storage
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/crc32"
@@ -60,9 +62,10 @@ type metadata struct {
 
 // 一个内存索引管理32GB文件
 type IndexInMemory struct {
-	idx *os.File //索引文件
-	dat *os.File //数据文件
-	md  *os.File //元数据文件
+	idx  *os.File //索引文件
+	dat  *os.File //数据文件
+	md   *os.File //元数据文件
+	enMd *json.Encoder
 	// 读写锁
 	rwmu sync.RWMutex
 
@@ -75,12 +78,19 @@ type IndexInMemory struct {
 	allIndex map[int64]Index
 }
 
+// 生成索引文件名
 func idxName(fileName string) string {
 	return fmt.Sprintf("%s.idx", fileName)
 }
 
+// 生成数据文件名
 func datName(fileName string) string {
 	return fmt.Sprintf("%s.dat", fileName)
+}
+
+// 生成元数据名
+func metaName(fileName string) string {
+	return fmt.Sprintf("%s.meta", fileName)
 }
 
 func newIndexInMemory(fileName string) (idx *IndexInMemory, err error) {
@@ -91,10 +101,54 @@ func newIndexInMemory(fileName string) (idx *IndexInMemory, err error) {
 		return nil, err
 	}
 
+	// 打开数据文件
 	if err = memIndex.loadDat(fileName); err != nil {
 		return nil, err
 	}
+
+	// 打开元数据文件
+	if err = memIndex.loadMeta(fileName); err != nil {
+		return nil, err
+	}
+
 	return &memIndex, nil
+}
+
+// 加载元数据
+func (i *IndexInMemory) loadMeta(fileName string) (err error) {
+	i.md, err = os.OpenFile(fileName, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0644)
+	if err != nil {
+		return err
+	}
+
+	r := bufio.NewReader(i.md)
+
+	var prev []byte
+	for {
+		l, e := r.ReadBytes('\n')
+		if len(l) == 0 && e != nil {
+			break
+		}
+		prev = l
+	}
+
+	err = json.Unmarshal(prev, &i.metadata)
+	if err != nil {
+		return err
+	}
+
+	if i.Readonly {
+
+		i.md.Close()
+
+		tmpFile := fileName + ".tmp"
+		i.md, err = os.OpenFile(tmpFile, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0644)
+
+		err = os.Rename(tmpFile, fileName)
+	}
+
+	i.enMd = json.NewEncoder(i.md)
+	return
 }
 
 func (i *IndexInMemory) loadIdx(idxName string) (err error) {
@@ -158,6 +212,10 @@ func (i *IndexInMemory) checkFull() (err error) {
 	}
 
 	return ErrFull
+}
+
+func (i *IndexInMemory) updateMetadata() {
+	i.enMd.Encode(&i.metadata)
 }
 
 func (i *IndexInMemory) GetSeq() (key int64) {
@@ -266,9 +324,18 @@ func (i *IndexInMemory) Close() (err error) {
 	if err = i.dat.Sync(); err != nil {
 		return err
 	}
+
+	if err = i.md.Sync(); err != nil {
+		return err
+	}
+
 	if err = i.idx.Close(); err != nil {
 		return err
 	}
 
-	return i.dat.Close()
+	if err = i.dat.Close(); err != nil {
+		return err
+	}
+
+	return i.md.Close()
 }
