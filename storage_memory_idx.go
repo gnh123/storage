@@ -100,17 +100,17 @@ func newIndexInMemory(fileName string) (idx *IndexInMemory, err error) {
 
 	// 打开并加载索引文件
 	if err = memIndex.loadIdx(fileName); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("loadIdx:%w", err)
 	}
 
 	// 打开数据文件
 	if err = memIndex.loadDat(fileName); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("loadDat:%w", err)
 	}
 
 	// 打开元数据文件
 	if err = memIndex.loadMeta(fileName); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("loadMeta:%w", err)
 	}
 
 	return &memIndex, nil
@@ -178,13 +178,14 @@ func (i *IndexInMemory) loadIdx(name string) (err error) {
 		}
 
 		buf := make([]byte, head)
-		_, err = i.idx.ReadAt(buf, i.idxOffset)
+		_, err = i.idx.ReadAt(buf, i.idxOffset+4)
 		if err != nil {
 			return err
 		}
 
 		var index IdxVersion0
 		if err = proto.Unmarshal(buf, &index); err != nil {
+			//fmt.Printf("head = %d, %x\n", head, buf)
 			return err
 		}
 
@@ -192,7 +193,7 @@ func (i *IndexInMemory) loadIdx(name string) (err error) {
 		if err = deepcopy.Copy(&index2, &index).Do(); err != nil {
 			return err
 		}
-		i.idxOffset += int64(head)
+		i.idxOffset += int64(head) + 4
 		i.allIndex[int64(index2.Key)] = index2
 	}
 }
