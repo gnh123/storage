@@ -115,8 +115,9 @@ func newIndexInMemory(fileName string) (idx *IndexInMemory, err error) {
 }
 
 // 加载元数据
-func (i *IndexInMemory) loadMeta(fileName string) (err error) {
-	i.md, err = os.OpenFile(fileName, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0644)
+func (i *IndexInMemory) loadMeta(name string) (err error) {
+	name = metaName(name)
+	i.md, err = os.OpenFile(name, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0644)
 	if err != nil {
 		return err
 	}
@@ -132,28 +133,30 @@ func (i *IndexInMemory) loadMeta(fileName string) (err error) {
 		prev = l
 	}
 
-	err = json.Unmarshal(prev, &i.metadata)
-	if err != nil {
-		return err
+	if len(prev) > 0 {
+		err = json.Unmarshal(prev, &i.metadata)
+		if err != nil {
+			return err
+		}
 	}
 
 	if i.Readonly {
 
 		i.md.Close()
 
-		tmpFile := fileName + ".tmp"
+		tmpFile := name + ".tmp"
 		i.md, err = os.OpenFile(tmpFile, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0644)
 
-		err = os.Rename(tmpFile, fileName)
+		err = os.Rename(tmpFile, name)
 	}
 
 	i.enMd = json.NewEncoder(i.md)
 	return
 }
 
-func (i *IndexInMemory) loadIdx(idxName string) (err error) {
+func (i *IndexInMemory) loadIdx(name string) (err error) {
 	// 打开索引文件
-	i.idx, err = os.OpenFile(idxName, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0644)
+	i.idx, err = os.OpenFile(idxName(name), os.O_CREATE|os.O_APPEND|os.O_RDWR, 0644)
 	if err != nil {
 		return err
 	}
@@ -192,8 +195,8 @@ func (i *IndexInMemory) loadIdx(idxName string) (err error) {
 	}
 }
 
-func (i *IndexInMemory) loadDat(datName string) (err error) {
-	i.dat, err = os.OpenFile(datName, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0644)
+func (i *IndexInMemory) loadDat(name string) (err error) {
+	i.dat, err = os.OpenFile(datName((name)), os.O_CREATE|os.O_APPEND|os.O_RDWR, 0644)
 	return
 }
 

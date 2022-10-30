@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gnh123/storage"
@@ -32,6 +33,22 @@ func (s *Storage) ParseSize(val string) {
 	}
 
 	s.Size = storage.Size(size)
+}
+
+func (s *Storage) createRaw(c *gin.Context) {
+	data, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(500, gin.H{"code": 1, "message": err.Error()})
+		return
+	}
+
+	index, err := s.s.Put(data)
+	if err != nil {
+		c.JSON(500, gin.H{"code": 1, "message": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{"code": 0, "message": "", "data": gin.H{"index": index}})
 }
 
 func (s *Storage) create(c *gin.Context) {
@@ -102,6 +119,7 @@ func main() {
 	}
 
 	r.POST("/file", s.create)
+	r.POST("/file/raw", s.createRaw)
 	r.DELETE("/file", s.delete)
 	r.GET("/file", s.get)
 
